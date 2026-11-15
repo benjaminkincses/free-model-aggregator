@@ -14,6 +14,7 @@ SCHEMA_PREFIX = "free-model-aggregator-01/"
 CREATED = 1767225600
 ENV_URL = os.environ.get("MAKEFUN_ENV_URL", "").rstrip("/")
 ROUTES = []
+PROVIDER_REFUSALS = {}
 
 
 def read_brief():
@@ -790,6 +791,8 @@ def candidates_for(body, client_wire, index):
                         "json": json_mode(body, client_wire)}
     candidates = []
     for route in ROUTES:
+        if PROVIDER_REFUSALS.get(route["provider"]["id"], 0) >= 3:
+            continue
         model = route["model"]
         if model.get("free") is not True:
             continue
@@ -955,14 +958,18 @@ class AggregatorHandler(BaseHTTPRequestHandler):
                 connection, response = open_http(
                     "POST", provider_post_url(provider, model, streaming),
                     body=json.dumps(translated).encode("utf-8"), headers=headers, timeout=25)
-            except Exception:
+            except Exception as error:
+                if isinstance(error, (OSError, http.client.HTTPException)):
+                    PROVIDER_REFUSALS[provider["id"]] = PROVIDER_REFUSALS.get(provider["id"], 0) + 1
                 if connection is not None:
                     connection.close()
                 continue
             if not 200 <= response.status < 300:
+                PROVIDER_REFUSALS[provider["id"]] = PROVIDER_REFUSALS.get(provider["id"], 0) + 1
                 response.close()
                 connection.close()
                 continue
+            PROVIDER_REFUSALS[provider["id"]] = 0
             # A successful upstream status commits this request to this provider.
             # In particular, translation or stream failures must never cause a retry.
             try:
